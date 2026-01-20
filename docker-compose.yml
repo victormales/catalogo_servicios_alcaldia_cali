@@ -18,7 +18,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASS:-cali_segura_2025}
       POSTGRES_DB: ${DB_NAME:-catalogo_cali}
     ports:
-      - "5432:5432"
+      - "5433:5432"  # Puerto externo 5433 para evitar conflicto con PostgreSQL local
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # Ejecuta el script de inicialización completa al crear la base de datos
