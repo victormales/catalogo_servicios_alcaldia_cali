@@ -1,0 +1,99 @@
+version: '3.8'
+
+# Definimos una red interna para que los contenedores se vean entre sí por nombre
+networks:
+  gobierno_net:
+    driver: bridge
+
+services:
+  # ------------------------------------------------
+  # 1. BASE DE DATOS (PostgreSQL)
+  # ------------------------------------------------
+  db:
+    image: postgres:15-alpine
+    container_name: catalogo_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-admin_datos}
+      POSTGRES_PASSWORD: ${DB_PASS:-cali_segura_2025}
+      POSTGRES_DB: ${DB_NAME:-catalogo_cali}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Ejecuta el script de creación de tablas al iniciar
+      - ./database/01_schema_ddl.sql:/docker-entrypoint-initdb.d/1_schema.sql
+    networks:
+      - gobierno_net
+    # Healthcheck: Verifica que Postgres esté listo antes de iniciar otros servicios
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-admin_datos} -d ${DB_NAME:-catalogo_cali}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ------------------------------------------------
+  # 2. ADMINISTRADOR VISUAL (pgAdmin 4)
+  # ------------------------------------------------
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: catalogo_pgadmin
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@cali.gov.co
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - gobierno_net
+
+  # ------------------------------------------------
+  # 3. INTERFAZ TIPO EXCEL (NocoDB)
+  # ------------------------------------------------
+  nocodb:
+    image: nocodb/nocodb:latest
+    container_name: catalogo_nocodb
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Cadena de conexión interna usando el nombre del servicio 'db'
+      NC_DB: "pg://db:5432?u=${DB_USER:-admin_datos}&p=${DB_PASS:-cali_segura_2025}&d=${DB_NAME:-catalogo_cali}"
+    ports:
+      - "8080:8080"
+    volumes:
+      - nocodb_data:/usr/app/data
+    networks:
+      - gobierno_net
+
+  # ------------------------------------------------
+  # 4. CARGADOR DE DATOS (ETL Python)
+  # ------------------------------------------------
+  etl:
+    build: 
+      context: ./etl
+      dockerfile: Dockerfile
+    container_name: catalogo_etl
+    # Solo reiniciar si falla, no si termina exitosamente
+    restart: on-failure
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_NAME: ${DB_NAME:-catalogo_cali}
+      DB_USER: ${DB_USER:-admin_datos}
+      DB_PASS: ${DB_PASS:-cali_segura_2025}
+    volumes:
+      # Montamos la carpeta de datos para leer el Excel
+      - ./data:/app/data
+    networks:
+      - gobierno_net
+
+volumes:
+  postgres_data:
+  nocodb_data:
